@@ -1,4 +1,4 @@
-module knative.dev/serving
+module github.com/pszzz/serving
 
 go 1.16
 
