@@ -32,8 +32,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	network "knative.dev/networking/pkg"
-	"knative.dev/networking/pkg/apis/networking"
+	netapi "knative.dev/networking/pkg/apis/networking"
+	netcfg "knative.dev/networking/pkg/config"
+	netheader "knative.dev/networking/pkg/http/header"
 	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/logging"
 	"knative.dev/pkg/metrics"
@@ -86,7 +87,7 @@ func TestMakeQueueContainer(t *testing.T) {
 		name string
 		rev  *v1.Revision
 		lc   logging.Config
-		nc   network.Config
+		nc   netcfg.Config
 		oc   metrics.ObservabilityConfig
 		dc   deployment.Config
 		fc   apicfg.Features
@@ -116,7 +117,7 @@ func TestMakeQueueContainer(t *testing.T) {
 				},
 				Ports: []corev1.ContainerPort{{
 					ContainerPort: 1955,
-					Name:          string(networking.ProtocolH2C),
+					Name:          string(netapi.ProtocolH2C),
 				}},
 			}})),
 		dc: deployment.Config{
@@ -124,7 +125,7 @@ func TestMakeQueueContainer(t *testing.T) {
 		},
 		want: queueContainer(func(c *corev1.Container) {
 			c.Image = "alpine"
-			c.Ports = append(queueNonServingPorts, queueHTTP2Port)
+			c.Ports = append(queueNonServingPorts, queueHTTP2Port, queueHTTPSPort)
 			c.ReadinessProbe.ProbeHandler.HTTPGet.Port.IntVal = queueHTTP2Port.ContainerPort
 			c.Env = env(map[string]string{
 				"USER_PORT":          "1955",
@@ -139,7 +140,7 @@ func TestMakeQueueContainer(t *testing.T) {
 				ReadinessProbe: testProbe,
 				Ports: []corev1.ContainerPort{{
 					ContainerPort: 1955,
-					Name:          string(networking.ProtocolH2C),
+					Name:          string(netapi.ProtocolH2C),
 				}},
 			}})),
 		dc: deployment.Config{
@@ -147,7 +148,7 @@ func TestMakeQueueContainer(t *testing.T) {
 		},
 		want: queueContainer(func(c *corev1.Container) {
 			c.Image = "alpine"
-			c.Ports = append(queueNonServingPorts, queueHTTP2Port)
+			c.Ports = append(queueNonServingPorts, queueHTTP2Port, queueHTTPSPort)
 			c.ReadinessProbe.ProbeHandler.HTTPGet.Port.IntVal = queueHTTP2Port.ContainerPort
 			c.Env = env(map[string]string{
 				"USER_PORT":          "1955",
@@ -269,7 +270,7 @@ func TestMakeQueueContainer(t *testing.T) {
 			c.Env = env(map[string]string{
 				"ENABLE_PROFILING": "true",
 			})
-			c.Ports = append(queueNonServingPorts, profilingPort, queueHTTPPort)
+			c.Ports = append(queueNonServingPorts, profilingPort, queueHTTPPort, queueHTTPSPort)
 		}),
 	}, {
 		name: "custom TimeoutSeconds",
@@ -569,7 +570,7 @@ func TestProbeGenerationHTTPDefaults(t *testing.T) {
 				Port:   intstr.FromInt(int(v1.DefaultUserPort)),
 				Scheme: corev1.URISchemeHTTP,
 				HTTPHeaders: []corev1.HTTPHeader{{
-					Name:  network.KubeletProbeHeaderName,
+					Name:  netheader.KubeletProbeKey,
 					Value: queue.Name,
 				}},
 			},
@@ -592,7 +593,7 @@ func TestProbeGenerationHTTPDefaults(t *testing.T) {
 				HTTPGet: &corev1.HTTPGetAction{
 					Port: intstr.FromInt(int(queueHTTPPort.ContainerPort)),
 					HTTPHeaders: []corev1.HTTPHeader{{
-						Name:  network.ProbeHeaderName,
+						Name:  netheader.ProbeKey,
 						Value: queue.Name,
 					}},
 				},
@@ -644,7 +645,7 @@ func TestProbeGenerationHTTP(t *testing.T) {
 				Port:   intstr.FromInt(userPort),
 				Scheme: corev1.URISchemeHTTPS,
 				HTTPHeaders: []corev1.HTTPHeader{{
-					Name:  network.KubeletProbeHeaderName,
+					Name:  netheader.KubeletProbeKey,
 					Value: queue.Name,
 				}},
 			},
@@ -668,7 +669,7 @@ func TestProbeGenerationHTTP(t *testing.T) {
 				HTTPGet: &corev1.HTTPGetAction{
 					Port: intstr.FromInt(int(queueHTTPPort.ContainerPort)),
 					HTTPHeaders: []corev1.HTTPHeader{{
-						Name:  network.ProbeHeaderName,
+						Name:  netheader.ProbeKey,
 						Value: queue.Name,
 					}},
 				},
@@ -735,7 +736,7 @@ func TestTCPProbeGeneration(t *testing.T) {
 					HTTPGet: &corev1.HTTPGetAction{
 						Port: intstr.FromInt(int(queueHTTPPort.ContainerPort)),
 						HTTPHeaders: []corev1.HTTPHeader{{
-							Name:  network.ProbeHeaderName,
+							Name:  netheader.ProbeKey,
 							Value: queue.Name,
 						}},
 					},
@@ -778,7 +779,7 @@ func TestTCPProbeGeneration(t *testing.T) {
 					HTTPGet: &corev1.HTTPGetAction{
 						Port: intstr.FromInt(int(queueHTTPPort.ContainerPort)),
 						HTTPHeaders: []corev1.HTTPHeader{{
-							Name:  network.ProbeHeaderName,
+							Name:  netheader.ProbeKey,
 							Value: queue.Name,
 						}},
 					},
@@ -831,7 +832,7 @@ func TestTCPProbeGeneration(t *testing.T) {
 					HTTPGet: &corev1.HTTPGetAction{
 						Port: intstr.FromInt(int(queueHTTPPort.ContainerPort)),
 						HTTPHeaders: []corev1.HTTPHeader{{
-							Name:  network.ProbeHeaderName,
+							Name:  netheader.ProbeKey,
 							Value: queue.Name,
 						}},
 					},
@@ -885,6 +886,7 @@ var defaultEnv = map[string]string{
 	"METRICS_DOMAIN":                   metrics.Domain(),
 	"METRICS_COLLECTOR_ADDRESS":        "",
 	"QUEUE_SERVING_PORT":               "8012",
+	"QUEUE_SERVING_TLS_PORT":           "8112",
 	"REVISION_TIMEOUT_SECONDS":         "45",
 	"SERVING_CONFIGURATION":            "",
 	"SERVING_ENABLE_PROBE_REQUEST_LOG": "false",
@@ -971,7 +973,7 @@ func revConfig() *config.Config {
 		},
 		Deployment:    &deploymentConfig,
 		Logging:       &logConfig,
-		Network:       &network.Config{},
+		Network:       &netcfg.Config{},
 		Observability: &obsConfig,
 		Tracing:       &traceConfig,
 	}

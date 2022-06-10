@@ -26,8 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	network "knative.dev/networking/pkg"
 	pkgnet "knative.dev/networking/pkg/apis/networking"
+	netheader "knative.dev/networking/pkg/http/header"
 	"knative.dev/pkg/kmap"
 	"knative.dev/pkg/metrics"
 	"knative.dev/pkg/profiling"
@@ -44,9 +44,10 @@ import (
 )
 
 const (
-	localAddress             = "127.0.0.1"
-	requestQueueHTTPPortName = "queue-port"
-	profilingPortName        = "profiling-port"
+	localAddress              = "127.0.0.1"
+	requestQueueHTTPPortName  = "queue-port"
+	requestQueueHTTPSPortName = "https-port" // must be no more than 15 characters.
+	profilingPortName         = "profiling-port"
 )
 
 var (
@@ -57,6 +58,10 @@ var (
 	queueHTTP2Port = corev1.ContainerPort{
 		Name:          requestQueueHTTPPortName,
 		ContainerPort: networking.BackendHTTP2Port,
+	}
+	queueHTTPSPort = corev1.ContainerPort{
+		Name:          requestQueueHTTPSPortName,
+		ContainerPort: networking.BackendHTTPSPort,
 	}
 	queueNonServingPorts = []corev1.ContainerPort{{
 		// Provides health checks and lifecycle hooks.
@@ -202,7 +207,7 @@ func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container
 	if rev.GetProtocol() == pkgnet.ProtocolH2C {
 		servingPort = queueHTTP2Port
 	}
-	ports = append(ports, servingPort)
+	ports = append(ports, servingPort, queueHTTPSPort)
 
 	container := rev.Spec.GetContainer()
 
@@ -239,7 +244,7 @@ func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container
 			HTTPGet: &corev1.HTTPGetAction{
 				Port: intstr.FromInt(int(servingPort.ContainerPort)),
 				HTTPHeaders: []corev1.HTTPHeader{{
-					Name:  network.ProbeHeaderName,
+					Name:  netheader.ProbeKey,
 					Value: queue.Name,
 				}},
 			},
@@ -269,6 +274,9 @@ func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container
 		}, {
 			Name:  "QUEUE_SERVING_PORT",
 			Value: strconv.Itoa(int(servingPort.ContainerPort)),
+		}, {
+			Name:  "QUEUE_SERVING_TLS_PORT",
+			Value: strconv.Itoa(int(queueHTTPSPort.ContainerPort)),
 		}, {
 			Name:  "CONTAINER_CONCURRENCY",
 			Value: strconv.Itoa(int(rev.Spec.GetContainerConcurrency())),
@@ -373,7 +381,7 @@ func applyReadinessProbeDefaultsForExec(p *corev1.Probe, port int32) {
 		}
 
 		p.HTTPGet.HTTPHeaders = append(p.HTTPGet.HTTPHeaders, corev1.HTTPHeader{
-			Name:  network.KubeletProbeHeaderName,
+			Name:  netheader.KubeletProbeKey,
 			Value: queue.Name,
 		})
 	case p.TCPSocket != nil:

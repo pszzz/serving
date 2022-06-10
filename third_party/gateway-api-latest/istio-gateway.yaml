@@ -20,8 +20,9 @@ metadata:
   name: knative-local-gateway
   namespace: istio-system
   labels:
-    serving.knative.dev/release: "v20220322-05cd9a71"
-    networking.knative.dev/ingress-provider: istio
+    app.kubernetes.io/component: net-gateway-api
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "20220609-1e6764b8"
     experimental.istio.io/disable-gateway-port-translation: "true"
 spec:
   type: ClusterIP

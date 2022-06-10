@@ -31,6 +31,7 @@ import (
 	caching "knative.dev/caching/pkg/apis/caching/v1alpha1"
 	cachingclient "knative.dev/caching/pkg/client/injection/client"
 	"knative.dev/networking/pkg/apis/networking"
+	netcfg "knative.dev/networking/pkg/config"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
@@ -891,5 +892,6 @@ func reconcilerTestConfig() *config.Config {
 		},
 		Logging: &logging.Config{},
 		Tracing: &tracingconfig.Config{},
+		Network: &netcfg.Config{},
 	}
 }

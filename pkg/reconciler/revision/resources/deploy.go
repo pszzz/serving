@@ -19,11 +19,13 @@ package resources
 import (
 	"fmt"
 	"strconv"
+	"time"
 
-	network "knative.dev/networking/pkg"
+	netheader "knative.dev/networking/pkg/http/header"
 	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/ptr"
 	"knative.dev/serving/pkg/apis/autoscaling"
+	"knative.dev/serving/pkg/apis/serving"
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
 	"knative.dev/serving/pkg/networking"
 	"knative.dev/serving/pkg/queue"
@@ -68,6 +70,12 @@ var (
 		},
 	}
 
+	certVolumeMount = corev1.VolumeMount{
+		MountPath: queue.CertDirectory,
+		Name:      "server-certs",
+		ReadOnly:  true,
+	}
+
 	varTokenVolumeMount = corev1.VolumeMount{
 		Name:      varTokenVolume.Name,
 		MountPath: concurrencyStateTokenVolumeMountPath,
@@ -87,6 +95,17 @@ var (
 	}
 )
 
+func certVolume(secret string) corev1.Volume {
+	return corev1.Volume{
+		Name: "server-certs",
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: secret,
+			},
+		},
+	}
+}
+
 func rewriteUserProbe(p *corev1.Probe, userPort int) {
 	if p == nil {
 		return
@@ -98,7 +117,7 @@ func rewriteUserProbe(p *corev1.Probe, userPort int) {
 		// user agent, so we need to inject an extra header to be able to distinguish
 		// between probes and real requests.
 		p.HTTPGet.HTTPHeaders = append(p.HTTPGet.HTTPHeaders, corev1.HTTPHeader{
-			Name:  network.KubeletProbeHeaderName,
+			Name:  netheader.KubeletProbeKey,
 			Value: queue.Name,
 		})
 	case p.TCPSocket != nil:
@@ -118,6 +137,11 @@ func makePodSpec(rev *v1.Revision, cfg *config.Config) (*corev1.PodSpec, error) 
 	if cfg.Deployment.ConcurrencyStateEndpoint != "" {
 		queueContainer.VolumeMounts = append(queueContainer.VolumeMounts, varTokenVolumeMount)
 		extraVolumes = append(extraVolumes, varTokenVolume)
+	}
+
+	if cfg.Network.QueueProxyCertSecret != "" {
+		queueContainer.VolumeMounts = append(queueContainer.VolumeMounts, certVolumeMount)
+		extraVolumes = append(extraVolumes, certVolume(cfg.Network.QueueProxyCertSecret))
 	}
 
 	podSpec := BuildPodSpec(rev, append(BuildUserContainers(rev), *queueContainer), cfg)
@@ -262,11 +286,19 @@ func MakeDeployment(rev *v1.Revision, cfg *config.Config) (*appsv1.Deployment, e
 	}
 
 	replicaCount := cfg.Autoscaler.InitialScale
-	ann, found := rev.Annotations[autoscaling.InitialScaleAnnotationKey]
+	_, ann, found := autoscaling.InitialScaleAnnotation.Get(rev.Annotations)
 	if found {
 		// Ignore errors and no error checking because already validated in webhook.
 		rc, _ := strconv.ParseInt(ann, 10, 32)
 		replicaCount = int32(rc)
+	}
+
+	progressDeadline := int32(cfg.Deployment.ProgressDeadline.Seconds())
+	_, pdAnn, pdFound := serving.ProgressDeadlineAnnotation.Get(rev.Annotations)
+	if pdFound {
+		// Ignore errors and no error checking because already validated in webhook.
+		pd, _ := time.ParseDuration(pdAnn)
+		progressDeadline = int32(pd.Seconds())
 	}
 
 	labels := makeLabels(rev)
@@ -285,7 +317,7 @@ func MakeDeployment(rev *v1.Revision, cfg *config.Config) (*appsv1.Deployment, e
 		Spec: appsv1.DeploymentSpec{
 			Replicas:                ptr.Int32(replicaCount),
 			Selector:                makeSelector(rev),
-			ProgressDeadlineSeconds: ptr.Int32(int32(cfg.Deployment.ProgressDeadline.Seconds())),
+			ProgressDeadlineSeconds: ptr.Int32(progressDeadline),
 			Strategy: appsv1.DeploymentStrategy{
 				Type: appsv1.RollingUpdateDeploymentStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDeployment{

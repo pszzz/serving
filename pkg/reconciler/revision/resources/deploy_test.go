@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	network "knative.dev/networking/pkg"
+	netheader "knative.dev/networking/pkg/http/header"
 	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/metrics"
 	"knative.dev/pkg/ptr"
@@ -75,13 +75,13 @@ var (
 	defaultQueueContainer = &corev1.Container{
 		Name:      QueueContainerName,
 		Resources: createQueueResources(&deploymentConfig, make(map[string]string), &corev1.Container{}),
-		Ports:     append(queueNonServingPorts, queueHTTPPort),
+		Ports:     append(queueNonServingPorts, queueHTTPPort, queueHTTPSPort),
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Port: intstr.FromInt(int(queueHTTPPort.ContainerPort)),
 					HTTPHeaders: []corev1.HTTPHeader{{
-						Name:  network.ProbeHeaderName,
+						Name:  netheader.ProbeKey,
 						Value: queue.Name,
 					}},
 				},
@@ -103,6 +103,9 @@ var (
 		}, {
 			Name:  "QUEUE_SERVING_PORT",
 			Value: "8012",
+		}, {
+			Name:  "QUEUE_SERVING_TLS_PORT",
+			Value: "8112",
 		}, {
 			Name:  "CONTAINER_CONCURRENCY",
 			Value: "0",
@@ -803,7 +806,7 @@ func TestMakePodSpec(t *testing.T) {
 							Path: "/",
 							Port: intstr.FromInt(v1.DefaultUserPort),
 							HTTPHeaders: []corev1.HTTPHeader{{
-								Name:  network.KubeletProbeHeaderName,
+								Name:  netheader.KubeletProbeKey,
 								Value: queue.Name,
 							}},
 						},
@@ -1236,7 +1239,7 @@ func TestMakeDeployment(t *testing.T) {
 				map[string]string{sidecarIstioInjectAnnotation: "false"})
 		}),
 	}, {
-		name: "with ProgressDeadline override",
+		name: "with progress-deadline override",
 		dc: deployment.Config{
 			ProgressDeadline: 42 * time.Second,
 		},
@@ -1251,6 +1254,43 @@ func TestMakeDeployment(t *testing.T) {
 			}}), withoutLabels),
 		want: appsv1deployment(func(deploy *appsv1.Deployment) {
 			deploy.Spec.ProgressDeadlineSeconds = ptr.Int32(42)
+		}),
+	}, {
+		name: "with progress-deadline annotation",
+		rev: revision("bar", "foo",
+			WithRevisionAnn("serving.knative.dev/progress-deadline", "42s"),
+			withContainers([]corev1.Container{{
+				Name:           servingContainerName,
+				Image:          "ubuntu",
+				ReadinessProbe: withTCPReadinessProbe(12345),
+			}}),
+			WithContainerStatuses([]v1.ContainerStatus{{
+				ImageDigest: "busybox@sha256:deadbeef",
+			}}), withoutLabels),
+		want: appsv1deployment(func(deploy *appsv1.Deployment) {
+			deploy.Spec.ProgressDeadlineSeconds = ptr.Int32(42)
+			deploy.Annotations = map[string]string{serving.ProgressDeadlineAnnotationKey: "42s"}
+			deploy.Spec.Template.Annotations = map[string]string{serving.ProgressDeadlineAnnotationKey: "42s"}
+		}),
+	}, {
+		name: "with ProgressDeadline annotation and configmap override",
+		dc: deployment.Config{
+			ProgressDeadline: 503 * time.Second,
+		},
+		rev: revision("bar", "foo",
+			WithRevisionAnn("serving.knative.dev/progress-deadline", "42s"),
+			withContainers([]corev1.Container{{
+				Name:           servingContainerName,
+				Image:          "ubuntu",
+				ReadinessProbe: withTCPReadinessProbe(12345),
+			}}),
+			WithContainerStatuses([]v1.ContainerStatus{{
+				ImageDigest: "busybox@sha256:deadbeef",
+			}}), withoutLabels),
+		want: appsv1deployment(func(deploy *appsv1.Deployment) {
+			deploy.Spec.ProgressDeadlineSeconds = ptr.Int32(42)
+			deploy.Annotations = map[string]string{serving.ProgressDeadlineAnnotationKey: "42s"}
+			deploy.Spec.Template.Annotations = map[string]string{serving.ProgressDeadlineAnnotationKey: "42s"}
 		}),
 	}, {
 		name: "cluster initial scale",
